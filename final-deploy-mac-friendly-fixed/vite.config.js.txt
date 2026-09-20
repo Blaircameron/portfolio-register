@@ -1,0 +1,6 @@
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+export default defineConfig({ plugins: [react()] })
+
+
+For Vercel only - no need to open on Mac

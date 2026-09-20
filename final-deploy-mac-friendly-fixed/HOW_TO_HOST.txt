@@ -1,0 +1,71 @@
+# How to Get Your Portfolio Register LIVE - Super Simple Guide (for non-coders)
+
+You have 60 properties, 70 tenants, 5 entities. You want this app live at your own domain.
+
+## What you have
+- Final app: Portfolio Register v5.1 - includes Dashboard, Properties, Leases, Tenants, Xero Bridge (read-only), OpEx calculator, Facilities (assets), Compliance (BWoF, Insurance, Fire Evac), Documents, Reports, plus Login with 3 tiers (Admin / Entity Owner / Tenant)
+
+## Option 1: Fastest - No database (2 minutes)
+1. Download file: v5-standalone.html (or use the artifact link I gave you)
+2. Go to https://app.netlify.com/drop
+3. Drag and drop that file
+4. You get a live link like https://your-site.netlify.app - share it
+Downside: Data only lives in your browser, not shared with others.
+
+## Option 2: Real live with shared database + logins (15 minutes, recommended)
+
+### Step A: Create free database (Supabase)
+1. Go to supabase.com -> Sign Up (free) -> New Project -> Name: portfolio-register -> Set password -> Create (wait 2 mins)
+2. Left menu -> SQL Editor -> New Query -> Open file supabase-schema.sql on your computer, copy all, paste, click Run
+3. You should see "Success" and 5 entities inserted
+4. Left menu -> Authentication -> Users -> Add User -> Create your admin account (your email + password)
+5. Left menu -> SQL Editor -> New Query -> Run this (replace UUID with the one you just created - copy from Users table):
+   insert into profiles (id, role, display_name) values ('YOUR_UUID_HERE','admin','Blair') on conflict (id) do update set role='admin';
+6. Settings -> API -> Copy Project URL and anon key (you need these next)
+
+### Step B: Host the app (Vercel - free)
+1. Go to github.com -> Sign Up -> New repository -> Name portfolio-register -> Create -> Upload files -> Drag all files from final-deploy folder (index.html, package.json, vite.config.js, src folder, .env.example) -> Commit
+2. Go to vercel.com -> Sign Up with GitHub -> Add New Project -> Import your portfolio-register repo
+3. It asks for Environment Variables -> Add:
+   VITE_SUPABASE_URL = paste Project URL from Supabase
+   VITE_SUPABASE_ANON_KEY = paste anon key from Supabase
+4. Click Deploy -> Wait 1 minute -> You get live URL like https://portfolio-register.vercel.app
+5. Open that URL -> Login with admin email you created -> You should see dashboard with 5 properties, 3 leases etc.
+
+### Step C: Add your own domain (optional, 5 mins)
+1. Buy domain at namecheap.com or cloudflare.com (e.g. tauporegister.co.nz) ~$20/year
+2. In Vercel -> Your Project -> Settings -> Domains -> Add your domain -> It shows you 2 DNS records
+3. Go to Namecheap/Cloudflare -> DNS settings -> Add those 2 records -> Save -> Wait 5 mins -> Your domain now shows your app
+
+### Step D: Add your real 60 properties (once)
+1. In your live app, go to Portfolio -> Add Property (or use CSV import - I can generate a template)
+2. Or in Supabase -> Table Editor -> properties -> Insert row for each property
+3. Same for tenants, leases
+
+### Step E: Xero (Phase 2 - later, not needed for go-live)
+- App is already read-only per your spec. When ready:
+- Go to developer.xero.com -> Create app (free sandbox) -> Test bank transactions feed
+- Add Xero client ID/secret as Vercel env vars (I will wire the OAuth refresh code as a Supabase Edge Function - just ask)
+
+## Costs
+- Vercel: Free
+- Supabase: Free tier enough for 60 props (up to 500MB DB, 50k monthly users)
+- Domain: ~$20/year
+- Xero API: Free (Starter tier <1000 calls/day)
+- Total: $20/year
+
+## What to do if stuck
+- Supabase not connecting? Check Vercel env vars are exactly correct and redeploy (Vercel -> Deployments -> Redeploy)
+- Login not working? Check profiles table has your UUID with role='admin'
+- Need entity owner logins? Create user in Supabase Auth, then insert into profiles with entity_id = (select id from entities where tracking_tag='LAKEVIEW')
+- Need tenant logins? Same but tenant_id = (select id from tenants where name ilike '%Bayleys%')
+
+## Files in this folder
+- index.html, package.json, vite.config.js = app shell
+- src/main.jsx = full app (premium design + all tables)
+- src/supabase.js, Login.jsx, ProtectedRoute.jsx = auth + 3-tier filtering
+- supabase-schema.sql = database
+- HOW_TO_HOST.md = this file
+- README.md = technical details
+
+You don't need to understand the code. Just follow Step A + B above and you are live.

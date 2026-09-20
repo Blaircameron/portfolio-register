@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Copy SQL for Supabase - Portfolio Register</title>
+<style>
+body{font-family:-apple-system,BlinkMacSystemFont,Inter,sans-serif;max-width:900px;margin:40px auto;padding:20px;background:#FDFCF8;color:#16283D;line-height:1.5}
+h1{font-family:Georgia,serif;font-size:26;margin:0 0 10px}
+.instr{background:#E8EFE8;border:1px solid #C7CFC7;border-radius:12px;padding:18px;margin:20px 0;font-size:14px}
+button{background:#1F4B3F;color:#fff;border:none;padding:14px 20px;border-radius:10;cursor:pointer;font-weight:600;font-size:15;margin:10px 0;width:100%}
+button:active{background:#16283D}
+textarea{width:100%;height:400px;background:#fff;border:1px solid #E8E5DE;border-radius:12px;padding:16px;font-family:monospace;font-size:11px;white-space:pre;overflow:auto}
+code{background:#F0EDE8;padding:2px 6px;border-radius:4;font-size:13px}
+.small{font-size:12px;color:#6B7A8A;margin-top:12px}
+</style>
+</head><body>
+<h1>Portfolio Register — Copy SQL</h1>
+<div class="instr">
+<b>Step 1:</b> Click the green Copy button below (it will say Copied!)<br>
+<b>Step 2:</b> Go to <code>supabase.com</code> → Your project → Left menu → <code>SQL Editor</code> → <code>New Query</code><br>
+<b>Step 3:</b> Paste <code>Cmd+V</code> → Click <code>Run</code> → You should see "Success"
+</div>
+
+<button id="copyBtn" onclick="copySQL()">📋 Copy All SQL to Clipboard</button>
+<div class="small">If copy doesn't work, manually select all text in the box below and copy (Cmd+A then Cmd+C)</div>
+
+<textarea id="sqlArea" readonly>-- Portfolio Register v4 - Supabase Schema
+-- Paste this entire file into Supabase SQL Editor and click Run
+-- Scale: 60 properties, ~70 tenants, 5 entities, 1 Xero org with Tracking Categories
+
+-- Enable UUIDs
+create extension if not exists &quot;uuid-ossp&quot;;
+
+-- 1. ENTITIES (5 landlord entities, distinguished by Xero Tracking Tag)
+create table entities (
+  id uuid primary key default uuid_generate_v4(),
+  name text not null,
+  tracking_tag text unique not null, -- e.g. LAKEVIEW, SPAROAD - matches Xero Tracking Category
+  notes text,
+  created_at timestamp with time zone default now()
+);
+
+-- 2. PROPERTIES (belongs to one entity)
+create table properties (
+  id uuid primary key default uuid_generate_v4(),
+  name text not null,
+  address text,
+  entity_id uuid references entities(id) on delete set null,
+  floor_area numeric,
+  year_built int,
+  created_at timestamp with time zone default now()
+);
+
+-- 3. TENANTS
+create table tenants (
+  id uuid primary key default uuid_generate_v4(),
+  name text not null,
+  email text,
+  phone text,
+  created_at timestamp with time zone default now()
+);
+
+-- 4. LEASES (standing invoice model - one invoice for full term)
+create table leases (
+  id uuid primary key default uuid_generate_v4(),
+  property_id uuid references properties(id) on delete cascade not null,
+  unit_label text, -- for multi-tenancy properties
+  tenant_id uuid references tenants(id) on delete set null not null,
+  monthly_rent numeric not null,
+  opex_pct numeric default 0, -- pro-rata % usually floor area share
+  start_date date not null,
+  end_date date not null,
+  rent_review_date date,
+  status text default &#x27;active&#x27; check (status in (&#x27;active&#x27;,&#x27;expired&#x27;,&#x27;holding_over&#x27;)),
+  notes text,
+  standing_invoice_number text, -- Xero invoice number for full term
+  standing_invoice_total numeric, -- e.g. 24 * monthly_rent
+  lease_term_months int generated always as (extract(year from age(end_date, start_date))*12 + extract(month from age(end_date, start_date))) stored,
+  created_at timestamp with time zone default now()
+);
+
+-- 5. XERO TRANSACTIONS (read-only bank feed + invoice payments)
+create table xero_transactions (
+  id uuid primary key default uuid_generate_v4(),
+  date date not null,
+  contact_name text,
+  tracking_tag text, -- to match entity
+  amount numeric not null,
+  reference text,
+  lease_id uuid references leases(id) on delete set null,
+  type text default &#x27;BANK_PAYMENT&#x27; check (type in (&#x27;BANK_PAYMENT&#x27;,&#x27;INVOICE_PAYMENT&#x27;)),
+  reconciled boolean default false,
+  created_at timestamp with time zone default now()
+);
+
+-- 6. OPEX COSTS (calculation only - never writes to Xero)
+create table opex_costs (
+  id uuid primary key default uuid_generate_v4(),
+  property_id uuid references properties(id) on delete cascade not null,
+  date date not null,
+  description text not null,
+  total_amount numeric not null,
+  category text check (category in (&#x27;Fire&#x27;,&#x27;HVAC&#x27;,&#x27;Lift&#x27;,&#x27;Cleaning&#x27;,&#x27;Insurance&#x27;,&#x27;Other&#x27;,&#x27;Security&#x27;,&#x27;Gardens&#x27;)),
+  invoice_ref text, -- supplier invoice ref
+  created_at timestamp with time zone default now()
+);
+
+-- 7. ASSETS / FACILITIES (Phase 4)
+create table assets (
+  id uuid primary key default uuid_generate_v4(),
+  property_id uuid references properties(id) on delete cascade not null,
+  type text not null check (type in (&#x27;Fire System&#x27;,&#x27;Lift&#x27;,&#x27;HVAC&#x27;,&#x27;Alarm&#x27;,&#x27;Electrical&#x27;,&#x27;Plumbing&#x27;,&#x27;Building Fabric&#x27;,&#x27;Other&#x27;)),
+  name text not null,
+  install_date date,
+  service_provider text,
+  service_interval_months int default 12,
+  last_service_date date,
+  next_service_date date generated always as (last_service_date + (service_interval_months || &#x27; months&#x27;)::interval) stored,
+  status text default &#x27;Operational&#x27; check (status in (&#x27;Operational&#x27;,&#x27;Requires Service&#x27;,&#x27;Fault&#x27;,&#x27;Decommissioned&#x27;)),
+  warranty_expiry date,
+  notes text,
+  created_at timestamp with time zone default now()
+);
+
+-- 8. MAINTENANCE REQUESTS + WORK ORDERS (Phase 4)
+create table maintenance_requests (
+  id uuid primary key default uuid_generate_v4(),
+  property_id uuid references properties(id) on delete cascade not null,
+  asset_id uuid references assets(id) on delete set null,
+  tenant_id uuid references tenants(id) on delete set null,
+  type text not null check (type in (&#x27;Preventive&#x27;,&#x27;Reactive&#x27;,&#x27;Tenant Request&#x27;)),
+  title text not null,
+  description text,
+  priority text default &#x27;Medium&#x27; check (priority in (&#x27;Low&#x27;,&#x27;Medium&#x27;,&#x27;High&#x27;,&#x27;Critical&#x27;)),
+  status text default &#x27;Open&#x27; check (status in (&#x27;Open&#x27;,&#x27;Assigned&#x27;,&#x27;In Progress&#x27;,&#x27;Completed&#x27;,&#x27;Closed&#x27;)),
+  reported_date date default current_date,
+  due_date date,
+  assigned_contractor text,
+  completed_date date,
+  cost numeric,
+  created_at timestamp with time zone default now()
+);
+
+-- 9. COMPLIANCE (BWoF, Insurance, Fire Evac - NZ)
+create table compliance_items (
+  id uuid primary key default uuid_generate_v4(),
+  property_id uuid references properties(id) on delete cascade not null,
+  type text not null check (type in (&#x27;BWoF&#x27;,&#x27;IQP Inspection&#x27;,&#x27;Insurance&#x27;,&#x27;Fire Evacuation Scheme&#x27;,&#x27;Building Warrant&#x27;,&#x27;Health &amp; Safety&#x27;,&#x27;Other&#x27;)),
+  title text not null,
+  issue_date date,
+  expiry_date date not null,
+  renewal_date date,
+  provider text,
+  certificate_ref text,
+  status text generated always as (
+    case 
+      when expiry_date &lt; current_date then &#x27;Overdue&#x27;
+      when expiry_date &lt;= current_date + interval &#x27;60 days&#x27; then &#x27;Due Soon&#x27;
+      else &#x27;Current&#x27;
+    end
+  ) stored,
+  notes text,
+  created_at timestamp with time zone default now()
+);
+
+-- 10. DOCUMENTS
+create table documents (
+  id uuid primary key default uuid_generate_v4(),
+  property_id uuid references properties(id) on delete cascade,
+  lease_id uuid references leases(id) on delete set null,
+  asset_id uuid references assets(id) on delete set null,
+  compliance_id uuid references compliance_items(id) on delete set null,
+  type text check (type in (&#x27;Lease&#x27;,&#x27;BWoF Certificate&#x27;,&#x27;Inspection Report&#x27;,&#x27;Insurance Policy&#x27;,&#x27;Maintenance Report&#x27;,&#x27;Photo&#x27;,&#x27;Other&#x27;)),
+  name text not null,
+  upload_date date default current_date,
+  file_ref text, -- Supabase Storage path
+  expiry_date date,
+  notes text,
+  created_at timestamp with time zone default now()
+);
+
+-- 11. PROFILES (extends auth.users for RBAC - 3 tiers)
+create table profiles (
+  id uuid primary key references auth.users(id) on delete cascade,
+  role text not null check (role in (&#x27;admin&#x27;,&#x27;entity_owner&#x27;,&#x27;tenant&#x27;)),
+  entity_id uuid references entities(id) on delete set null, -- for entity_owner
+  tenant_id uuid references tenants(id) on delete set null, -- for tenant
+  display_name text,
+  created_at timestamp with time zone default now()
+);
+
+-- Indexes for performance (60 props scale is tiny but good practice)
+create index idx_properties_entity on properties(entity_id);
+create index idx_leases_property on leases(property_id);
+create index idx_leases_tenant on leases(tenant_id);
+create index idx_xero_lease on xero_transactions(lease_id);
+create index idx_assets_property on assets(property_id);
+create index idx_maintenance_property on maintenance_requests(property_id);
+create index idx_compliance_property on compliance_items(property_id);
+create index idx_compliance_expiry on compliance_items(expiry_date);
+
+-- Enable RLS
+alter table entities enable row level security;
+alter table properties enable row level security;
+alter table tenants enable row level security;
+alter table leases enable row level security;
+alter table xero_transactions enable row level security;
+alter table opex_costs enable row level security;
+alter table assets enable row level security;
+alter table maintenance_requests enable row level security;
+alter table compliance_items enable row level security;
+alter table documents enable row level security;
+alter table profiles enable row level security;
+
+-- RLS Policies: 3-tier access (simplified for v1 - admin sees all)
+-- Admin policy: full access if role=admin
+create policy &quot;admin_all_entities&quot; on entities for all using (
+  exists (select 1 from profiles where profiles.id = auth.uid() and profiles.role = &#x27;admin&#x27;)
+);
+create policy &quot;admin_all_properties&quot; on properties for all using (
+  exists (select 1 from profiles where profiles.id = auth.uid() and profiles.role = &#x27;admin&#x27;)
+);
+create policy &quot;admin_all_leases&quot; on leases for all using (
+  exists (select 1 from profiles where profiles.id = auth.uid() and profiles.role = &#x27;admin&#x27;)
+);
+create policy &quot;admin_all_tenants&quot; on tenants for all using (
+  exists (select 1 from profiles where profiles.id = auth.uid() and profiles.role = &#x27;admin&#x27;)
+);
+create policy &quot;admin_all_xero&quot; on xero_transactions for all using (
+  exists (select 1 from profiles where profiles.id = auth.uid() and profiles.role = &#x27;admin&#x27;)
+);
+create policy &quot;admin_all_opex&quot; on opex_costs for all using (
+  exists (select 1 from profiles where profiles.id = auth.uid() and profiles.role = &#x27;admin&#x27;)
+);
+create policy &quot;admin_all_assets&quot; on assets for all using (
+  exists (select 1 from profiles where profiles.id = auth.uid() and profiles.role = &#x27;admin&#x27;)
+);
+create policy &quot;admin_all_maintenance&quot; on maintenance_requests for all using (
+  exists (select 1 from profiles where profiles.id = auth.uid() and profiles.role = &#x27;admin&#x27;)
+);
+create policy &quot;admin_all_compliance&quot; on compliance_items for all using (
+  exists (select 1 from profiles where profiles.id = auth.uid() and profiles.role = &#x27;admin&#x27;)
+);
+create policy &quot;admin_all_documents&quot; on documents for all using (
+  exists (select 1 from profiles where profiles.id = auth.uid() and profiles.role = &#x27;admin&#x27;)
+);
+
+-- Profiles: users can read own profile, admin can read all
+create policy &quot;users_own_profile&quot; on profiles for all using (id = auth.uid() or exists (select 1 from profiles p where p.id = auth.uid() and p.role=&#x27;admin&#x27;));
+
+-- Allow authenticated to read entities/properties/tenants for now (tighten to entity_owner later)
+create policy &quot;auth_read_entities&quot; on entities for select using (auth.role() = &#x27;authenticated&#x27;);
+create policy &quot;auth_read_properties&quot; on properties for select using (auth.role() = &#x27;authenticated&#x27;);
+create policy &quot;auth_read_tenants&quot; on tenants for select using (auth.role() = &#x27;authenticated&#x27;);
+create policy &quot;auth_read_leases&quot; on leases for select using (auth.role() = &#x27;authenticated&#x27;);
+create policy &quot;auth_read_xero&quot; on xero_transactions for select using (auth.role() = &#x27;authenticated&#x27;);
+create policy &quot;auth_read_opex&quot; on opex_costs for select using (auth.role() = &#x27;authenticated&#x27;);
+create policy &quot;auth_read_assets&quot; on assets for select using (auth.role() = &#x27;authenticated&#x27;);
+create policy &quot;auth_read_maintenance&quot; on maintenance_requests for select using (auth.role() = &#x27;authenticated&#x27;);
+create policy &quot;auth_read_compliance&quot; on compliance_items for select using (auth.role() = &#x27;authenticated&#x27;);
+create policy &quot;auth_read_documents&quot; on documents for select using (auth.role() = &#x27;authenticated&#x27;);
+
+-- Seed with your 5 entities
+insert into entities (name, tracking_tag) values
+(&#x27;Lakeview Holdings Ltd&#x27;,&#x27;LAKEVIEW&#x27;),
+(&#x27;Spa Road Properties Ltd&#x27;,&#x27;SPAROAD&#x27;),
+(&#x27;Lakefront Investments Ltd&#x27;,&#x27;LAKEFRONT&#x27;),
+(&#x27;Taupo Commercial Ltd&#x27;,&#x27;TAUPO-COM&#x27;),
+(&#x27;Central Assets Ltd&#x27;,&#x27;CENTRAL&#x27;)
+on conflict (tracking_tag) do nothing;
+
+-- Storage bucket for documents
+insert into storage.buckets (id, name, public) values (&#x27;portfolio-docs&#x27;,&#x27;portfolio-docs&#x27;, false)
+on conflict (id) do nothing;
+
+-- Storage policy
+create policy &quot;admin_storage&quot; on storage.objects for all using (
+  bucket_id = &#x27;portfolio-docs&#x27; and exists (select 1 from profiles where profiles.id = auth.uid() and profiles.role=&#x27;admin&#x27;)
+);
+create policy &quot;auth_read_storage&quot; on storage.objects for select using (
+  bucket_id = &#x27;portfolio-docs&#x27; and auth.role() = &#x27;authenticated&#x27;
+);
+</textarea>
+
+<button id="copyBtn2" onclick="copySQL()">📋 Copy All SQL Again</button>
+
+<div class="instr" style="margin-top:30px">
+<b>Alternative:</b> You can also just open <code>supabase-schema.txt</code> in TextEdit, select all (Cmd+A), copy (Cmd+C), and paste into Supabase. Same thing.
+</div>
+
+<script>
+function copySQL(){
+  const area = document.getElementById('sqlArea');
+  area.select();
+  area.setSelectionRange(0, 999999);
+  try {
+    navigator.clipboard.writeText(area.value).then(()=>{
+      document.getElementById('copyBtn').innerText='✓ Copied! Now paste into Supabase SQL Editor';
+      document.getElementById('copyBtn2').innerText='✓ Copied! Now paste into Supabase SQL Editor';
+    });
+  } catch(e) {
+    document.execCommand('copy');
+    document.getElementById('copyBtn').innerText='✓ Copied! (fallback)';
+  }
+}
+</script>
+</body></html>

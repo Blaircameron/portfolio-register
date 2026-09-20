@@ -1,0 +1,235 @@
+-- Portfolio Register v5.1 - FIXED Supabase Schema (no generated columns)
+-- Paste this entire file into Supabase SQL Editor and click Run
+-- Fixes: 42P17 generation expression is not immutable
+
+create extension if not exists "uuid-ossp";
+
+-- Clean up old if exists (only for fresh project - safe to run)
+drop table if exists documents cascade;
+drop table if exists compliance_items cascade;
+drop table if exists maintenance_requests cascade;
+drop table if exists assets cascade;
+drop table if exists opex_costs cascade;
+drop table if exists xero_transactions cascade;
+drop table if exists leases cascade;
+drop table if exists tenants cascade;
+drop table if exists properties cascade;
+drop table if exists entities cascade;
+drop table if exists profiles cascade;
+
+-- 1. ENTITIES
+create table entities (
+  id uuid primary key default uuid_generate_v4(),
+  name text not null,
+  tracking_tag text unique not null,
+  notes text,
+  created_at timestamp with time zone default now()
+);
+
+-- 2. PROPERTIES
+create table properties (
+  id uuid primary key default uuid_generate_v4(),
+  name text not null,
+  address text,
+  entity_id uuid references entities(id) on delete set null,
+  floor_area numeric,
+  year_built int,
+  created_at timestamp with time zone default now()
+);
+
+-- 3. TENANTS
+create table tenants (
+  id uuid primary key default uuid_generate_v4(),
+  name text not null,
+  email text,
+  phone text,
+  created_at timestamp with time zone default now()
+);
+
+-- 4. LEASES - FIXED: lease_term_months is now regular int, not generated
+create table leases (
+  id uuid primary key default uuid_generate_v4(),
+  property_id uuid references properties(id) on delete cascade not null,
+  unit_label text,
+  tenant_id uuid references tenants(id) on delete set null not null,
+  monthly_rent numeric not null,
+  opex_pct numeric default 0,
+  start_date date not null,
+  end_date date not null,
+  rent_review_date date,
+  status text default 'active' check (status in ('active','expired','holding_over')),
+  notes text,
+  standing_invoice_number text,
+  standing_invoice_total numeric,
+  lease_term_months int,
+  created_at timestamp with time zone default now()
+);
+
+-- 5. XERO TRANSACTIONS
+create table xero_transactions (
+  id uuid primary key default uuid_generate_v4(),
+  date date not null,
+  contact_name text,
+  tracking_tag text,
+  amount numeric not null,
+  reference text,
+  lease_id uuid references leases(id) on delete set null,
+  type text default 'BANK_PAYMENT' check (type in ('BANK_PAYMENT','INVOICE_PAYMENT')),
+  reconciled boolean default false,
+  created_at timestamp with time zone default now()
+);
+
+-- 6. OPEX COSTS
+create table opex_costs (
+  id uuid primary key default uuid_generate_v4(),
+  property_id uuid references properties(id) on delete cascade not null,
+  date date not null,
+  description text not null,
+  total_amount numeric not null,
+  category text check (category in ('Fire','HVAC','Lift','Cleaning','Insurance','Other','Security','Gardens')),
+  invoice_ref text,
+  created_at timestamp with time zone default now()
+);
+
+-- 7. ASSETS - FIXED: next_service_date is regular date, not generated
+create table assets (
+  id uuid primary key default uuid_generate_v4(),
+  property_id uuid references properties(id) on delete cascade not null,
+  type text not null check (type in ('Fire System','Lift','HVAC','Alarm','Electrical','Plumbing','Building Fabric','Other')),
+  name text not null,
+  install_date date,
+  service_provider text,
+  service_interval_months int default 12,
+  last_service_date date,
+  next_service_date date,
+  status text default 'Operational' check (status in ('Operational','Requires Service','Fault','Decommissioned')),
+  warranty_expiry date,
+  notes text,
+  created_at timestamp with time zone default now()
+);
+
+-- 8. MAINTENANCE REQUESTS
+create table maintenance_requests (
+  id uuid primary key default uuid_generate_v4(),
+  property_id uuid references properties(id) on delete cascade not null,
+  asset_id uuid references assets(id) on delete set null,
+  tenant_id uuid references tenants(id) on delete set null,
+  type text not null check (type in ('Preventive','Reactive','Tenant Request')),
+  title text not null,
+  description text,
+  priority text default 'Medium' check (priority in ('Low','Medium','High','Critical')),
+  status text default 'Open' check (status in ('Open','Assigned','In Progress','Completed','Closed')),
+  reported_date date default current_date,
+  due_date date,
+  assigned_contractor text,
+  completed_date date,
+  cost numeric,
+  created_at timestamp with time zone default now()
+);
+
+-- 9. COMPLIANCE - FIXED: status is regular text, not generated (calculated in app)
+create table compliance_items (
+  id uuid primary key default uuid_generate_v4(),
+  property_id uuid references properties(id) on delete cascade not null,
+  type text not null check (type in ('BWoF','IQP Inspection','Insurance','Fire Evacuation Scheme','Building Warrant','Health & Safety','Other')),
+  title text not null,
+  issue_date date,
+  expiry_date date not null,
+  renewal_date date,
+  provider text,
+  certificate_ref text,
+  status text default 'Current',
+  notes text,
+  created_at timestamp with time zone default now()
+);
+
+-- 10. DOCUMENTS
+create table documents (
+  id uuid primary key default uuid_generate_v4(),
+  property_id uuid references properties(id) on delete cascade,
+  lease_id uuid references leases(id) on delete set null,
+  asset_id uuid references assets(id) on delete set null,
+  compliance_id uuid references compliance_items(id) on delete set null,
+  type text check (type in ('Lease','BWoF Certificate','Inspection Report','Insurance Policy','Maintenance Report','Photo','Other')),
+  name text not null,
+  upload_date date default current_date,
+  file_ref text,
+  expiry_date date,
+  notes text,
+  created_at timestamp with time zone default now()
+);
+
+-- 11. PROFILES
+create table profiles (
+  id uuid primary key references auth.users(id) on delete cascade,
+  role text not null check (role in ('admin','entity_owner','tenant')),
+  entity_id uuid references entities(id) on delete set null,
+  tenant_id uuid references tenants(id) on delete set null,
+  display_name text,
+  tracking_tag text,
+  created_at timestamp with time zone default now()
+);
+
+-- Indexes
+create index idx_properties_entity on properties(entity_id);
+create index idx_leases_property on leases(property_id);
+create index idx_leases_tenant on leases(tenant_id);
+create index idx_xero_lease on xero_transactions(lease_id);
+create index idx_assets_property on assets(property_id);
+create index idx_maintenance_property on maintenance_requests(property_id);
+create index idx_compliance_property on compliance_items(property_id);
+create index idx_compliance_expiry on compliance_items(expiry_date);
+
+-- Enable RLS
+alter table entities enable row level security;
+alter table properties enable row level security;
+alter table tenants enable row level security;
+alter table leases enable row level security;
+alter table xero_transactions enable row level security;
+alter table opex_costs enable row level security;
+alter table assets enable row level security;
+alter table maintenance_requests enable row level security;
+alter table compliance_items enable row level security;
+alter table documents enable row level security;
+alter table profiles enable row level security;
+
+-- RLS: Admin full access
+create policy "admin_all_entities" on entities for all using (exists (select 1 from profiles where profiles.id = auth.uid() and profiles.role = 'admin'));
+create policy "admin_all_properties" on properties for all using (exists (select 1 from profiles where profiles.id = auth.uid() and profiles.role = 'admin'));
+create policy "admin_all_leases" on leases for all using (exists (select 1 from profiles where profiles.id = auth.uid() and profiles.role = 'admin'));
+create policy "admin_all_tenants" on tenants for all using (exists (select 1 from profiles where profiles.id = auth.uid() and profiles.role = 'admin'));
+create policy "admin_all_xero" on xero_transactions for all using (exists (select 1 from profiles where profiles.id = auth.uid() and profiles.role = 'admin'));
+create policy "admin_all_opex" on opex_costs for all using (exists (select 1 from profiles where profiles.id = auth.uid() and profiles.role = 'admin'));
+create policy "admin_all_assets" on assets for all using (exists (select 1 from profiles where profiles.id = auth.uid() and profiles.role = 'admin'));
+create policy "admin_all_maintenance" on maintenance_requests for all using (exists (select 1 from profiles where profiles.id = auth.uid() and profiles.role = 'admin'));
+create policy "admin_all_compliance" on compliance_items for all using (exists (select 1 from profiles where profiles.id = auth.uid() and profiles.role = 'admin'));
+create policy "admin_all_documents" on documents for all using (exists (select 1 from profiles where profiles.id = auth.uid() and profiles.role = 'admin'));
+create policy "users_own_profile" on profiles for all using (id = auth.uid() or exists (select 1 from profiles p where p.id = auth.uid() and p.role='admin'));
+
+-- Allow authenticated read (tighten later for entity_owner/tenant)
+create policy "auth_read_entities" on entities for select using (auth.role() = 'authenticated');
+create policy "auth_read_properties" on properties for select using (auth.role() = 'authenticated');
+create policy "auth_read_tenants" on tenants for select using (auth.role() = 'authenticated');
+create policy "auth_read_leases" on leases for select using (auth.role() = 'authenticated');
+create policy "auth_read_xero" on xero_transactions for select using (auth.role() = 'authenticated');
+create policy "auth_read_opex" on opex_costs for select using (auth.role() = 'authenticated');
+create policy "auth_read_assets" on assets for select using (auth.role() = 'authenticated');
+create policy "auth_read_maintenance" on maintenance_requests for select using (auth.role() = 'authenticated');
+create policy "auth_read_compliance" on compliance_items for select using (auth.role() = 'authenticated');
+create policy "auth_read_documents" on documents for select using (auth.role() = 'authenticated');
+
+-- Seed 5 entities
+insert into entities (name, tracking_tag) values
+('Lakeview Holdings Ltd','LAKEVIEW'),
+('Spa Road Properties Ltd','SPAROAD'),
+('Lakefront Investments Ltd','LAKEFRONT'),
+('Taupo Commercial Ltd','TAUPO-COM'),
+('Central Assets Ltd','CENTRAL')
+on conflict (tracking_tag) do nothing;
+
+-- Storage bucket
+insert into storage.buckets (id, name, public) values ('portfolio-docs','portfolio-docs', false)
+on conflict (id) do nothing;
+
+create policy "admin_storage" on storage.objects for all using (bucket_id = 'portfolio-docs' and exists (select 1 from profiles where profiles.id = auth.uid() and profiles.role='admin'));
+create policy "auth_read_storage" on storage.objects for select using (bucket_id = 'portfolio-docs' and auth.role() = 'authenticated');
